@@ -1,0 +1,31 @@
+[package]
+description = "Matterhorn Browser Viewport — WebView embedding for GPUI"
+edition.workspace = true
+name = "matterhorn_viewport"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/matterhorn_viewport.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+gpui_tokio.workspace = true
+hex.workspace = true
+matterhorn_common.workspace = true
+matterhorn_composer.workspace = true
+matterhorn_onboarding.workspace = true
+matterhorn_orchestrator.workspace = true
+matterhorn_sidebar.workspace = true
+matterhorn_wallet.workspace = true
+raw-window-handle = "0.6"
+serde.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+util.workspace = true
+wry = "0.50"

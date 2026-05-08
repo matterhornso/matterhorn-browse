@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Matterhorn</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px -apple-system,BlinkMacSystemFont,'SF Pro',sans-serif;background:#0d0d0d;color:#e4e4e7;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#chrome{display:flex;flex-direction:column;border-bottom:1px solid #2a2a2a;background:#0d0d0d;z-index:10}
+#tab-bar{display:flex;align-items:center;padding:4px 8px 0 8px;gap:2px;min-height:36px}
+.tab{padding:6px 14px;border-radius:8px 8px 0 0;font-size:12px;font-weight:500;color:#71717a;cursor:pointer;transition:background .15s,color .15s;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.tab.active{color:#e4e4e7;background:#1a1a1a}
+.tab:hover:not(.active){color:#e4e4e7;background:rgba(255,255,255,.04)}
+#composer-row{display:flex;align-items:center;gap:8px;padding:6px 10px 8px 10px;background:#1a1a1a;border-radius:8px;margin:4px 8px 8px 8px}
+#composer{flex:1;background:none;border:none;outline:none;color:#e4e4e7;font-size:13px;padding:4px 0}
+#composer::placeholder{color:#71717a}
+#wallet-badge{display:none;align-items:center;gap:6px;padding:3px 10px;background:rgba(139,92,246,.25);border:1px solid #8b5cf6;border-radius:20px;font-size:11px;font-family:'SF Mono',monospace;color:#8b5cf6;cursor:pointer;flex-shrink:0}
+#wallet-badge.visible{display:flex}
+#wallet-badge .dot{width:6px;height:6px;border-radius:50%;background:#22c55e}
+#main{flex:1;display:flex;position:relative}
+#sidebar{display:none;flex-direction:column;width:280px;background:#1a1a1a;border-right:1px solid #2a2a2a;padding:16px;gap:16px;overflow-y:auto}
+#sidebar.visible{display:flex}
+.section-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#71717a;margin-bottom:8px}
+.dapp-card{padding:10px 12px;background:#0d0d0d;border-radius:8px;border:1px solid #2a2a2a;font-size:12px;cursor:pointer;transition:border-color .15s}
+.dapp-card:hover{border-color:#8b5cf6}
+.dapp-card .name{font-weight:500}
+.dapp-card .url{font-size:11px;color:#71717a}
+#viewport{flex:1;background:#fff}
+#overlay{position:fixed;inset:0;background:#0d0d0d;display:flex;align-items:center;justify-content:center;z-index:100}
+#overlay.hidden{display:none}
+#overlay .card{width:400px;max-width:90vw;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:32px;display:flex;flex-direction:column;gap:20px}
+#overlay h1{font-size:20px;font-weight:600;text-align:center}
+#overlay p{font-size:13px;color:#71717a;line-height:1.6;text-align:center}
+.input-group{display:flex;flex-direction:column;gap:6px}
+.input-group label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#71717a}
+.input-group input,.input-group textarea{padding:10px 12px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;color:#e4e4e7;font-size:13px;outline:none;resize:vertical}
+.input-group input:focus,.input-group textarea:focus{border-color:#8b5cf6}
+.btn{padding:10px 16px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:opacity .15s;text-align:center}
+.btn-primary{background:#8b5cf6;color:#fff}
+.btn-primary:hover{opacity:.9}
+.btn-secondary{background:transparent;border:1px solid #2a2a2a;color:#e4e4e7}
+.btn-secondary:hover{background:rgba(255,255,255,.04)}
+.btn-row{display:flex;gap:8px}
+.btn-row .btn{flex:1}
+.error-msg{font-size:12px;color:#ef4444;text-align:center;display:none}
+.error-msg.visible{display:block}
+.seed-phrase{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.seed-word{padding:6px 10px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:4px;font-family:'SF Mono',monospace;font-size:12px;color:#e4e4e7;display:flex;gap:6px}
+.seed-word .idx{color:#71717a}
+.fade-in{animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+</style></head>
+<body>
+
+<div id="chrome">
+  <div id="tab-bar">
+    <div class="tab active" id="tab-1">New Tab</div>
+    <div class="tab" style="font-size:16px;padding:4px 10px">+</div>
+  </div>
+  <div id="composer-row">
+    <input id="composer" type="text" placeholder="Search or enter URL..." autocomplete="off" spellcheck="false">
+    <div id="wallet-badge"><div class="dot"></div><span id="wallet-addr"></span></div>
+  </div>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div>
+      <div class="section-title">Bookmarks</div>
+      <div class="dapp-card" data-url="https://app.uniswap.org"><div class="name">Uniswap</div><div class="url">app.uniswap.org</div></div>
+      <div class="dapp-card" style="margin-top:6px" data-url="https://opensea.io"><div class="name">OpenSea</div><div class="url">opensea.io</div></div>
+    </div>
+  </div>
+  <div id="viewport"></div>
+</div>
+
+<div id="overlay"></div>
+
+<script>
+var state={view:'loading',hasWallet:false,isLocked:false,address:''};
+
+var IPC_READY=typeof window.ipc!=='undefined';
+if(!IPC_READY){
+  document.body.innerHTML='<div style="color:#ef4444;font-size:20px;padding:40px;text-align:center">ERROR: window.ipc not available<br><small>WKWebView IPC bridge missing</small></div>';
+  throw new Error('IPC not ready');
+}
+
+function ipc(a,p){p=p||{};p.action=a;window.ipc.postMessage(JSON.stringify(p))}
+
+window.__mh_onResponse=function(r){
+  if(r.data&&r.data.event==='init'){
+    state.hasWallet=r.data.has_wallet;state.isLocked=r.data.is_locked;
+    if(!state.hasWallet)showView('onboarding-choose');
+    else if(state.isLocked)showView('lock');
+    else showView('browser');
+    return
+  }
+  if(!r.ok){showError(r.error||'Error');return}
+  if(r.data&&r.data.address){
+    state.address=r.data.address;updateBadge();
+    if(state.view.indexOf('onboarding')===0){state.isLocked=false;showView('browser')}
+  }
+};
+
+function showView(v,d){
+  d=d||{};state.view=v;
+  var o=document.getElementById('overlay');
+  var sb=document.getElementById('sidebar');
+  var cp=document.getElementById('composer');
+  var wb=document.getElementById('wallet-badge');
+
+  switch(v){
+    case'loading':
+      o.classList.remove('hidden');sb.classList.remove('visible');wb.classList.remove('visible');
+      o.innerHTML='<div class="card"><h1>Matterhorn</h1><p>Loading...</p></div>';break;
+    case'onboarding-choose':
+      o.classList.remove('hidden');
+      o.innerHTML='<div class="card fade-in"><h1>🏔 Welcome to Matterhorn</h1><p>Browse Web3 with a wallet-first browser.</p><div class="btn-row"><button class="btn btn-primary" onclick="showView(\'onboarding-create\')">Create New Wallet</button><button class="btn btn-secondary" onclick="showView(\'onboarding-import\')">Import Wallet</button></div></div>';break;
+    case'onboarding-create':
+      o.classList.remove('hidden');
+      o.innerHTML='<div class="card fade-in"><h1>Create Wallet</h1><p>Choose a strong password.</p><div class="input-group"><label>Password</label><input type="password" id="onb-pass" placeholder="Min 8 characters"></div><div class="input-group"><label>Confirm</label><input type="password" id="onb-pass-confirm" placeholder="Re-enter password"></div><div id="onb-error" class="error-msg"></div><div class="btn-row"><button class="btn btn-secondary" onclick="showView(\'onboarding-choose\')">Back</button><button class="btn btn-primary" onclick="createWallet()">Create</button></div></div>';break;
+    case'onboarding-seed':
+      o.classList.remove('hidden');
+      var ws=(d.seed_phrase||'').split(' '),wh='';
+      for(var i=0;i<ws.length;i++)wh+='<div class="seed-word"><span class="idx">'+(i+1)+'</span> '+ws[i]+'</div>';
+      o.innerHTML='<div class="card fade-in"><h1>Your Recovery Phrase</h1><p>Write these 12 words down. <strong>Never share them.</strong></p><div class="seed-phrase">'+wh+'</div><button class="btn btn-primary" onclick="showView(\'browser\')">I\'ve Saved It</button></div>';break;
+    case'onboarding-import':
+      o.classList.remove('hidden');
+      o.innerHTML='<div class="card fade-in"><h1>Import Wallet</h1><p>Enter your 12-word recovery phrase.</p><div class="input-group"><label>Seed Phrase</label><textarea id="onb-seed" rows="3" placeholder="Enter 12 words..."></textarea></div><div class="input-group"><label>New Password</label><input type="password" id="onb-pass" placeholder="Min 8 characters"></div><div id="onb-error" class="error-msg"></div><div class="btn-row"><button class="btn btn-secondary" onclick="showView(\'onboarding-choose\')">Back</button><button class="btn btn-primary" onclick="importWallet()">Import</button></div></div>';break;
+    case'lock':
+      o.classList.remove('hidden');
+      o.innerHTML='<div class="card fade-in"><h1>🔒 Matterhorn is Locked</h1><p>Enter password to unlock.</p><div class="input-group"><label>Password</label><input type="password" id="lock-pass" placeholder="Your password"></div><div id="lock-error" class="error-msg"></div><button class="btn btn-primary" onclick="unlock()">Unlock</button></div>';
+      setTimeout(function(){var e=document.getElementById('lock-pass');if(e)e.focus()},100);break;
+    case'browser':
+      o.classList.add('hidden');sb.classList.add('visible');updateBadge();cp.focus();break;
+  }
+}
+
+function createWallet(){
+  var p=(document.getElementById('onb-pass')||{}).value||'';
+  var c=(document.getElementById('onb-pass-confirm')||{}).value||'';
+  if(p.length<8)return showError('Password must be 8+ characters');
+  if(p!==c)return showError('Passwords do not match');
+  clearError();ipc('create_wallet',{password:p})
+}
+function importWallet(){
+  var s=((document.getElementById('onb-seed')||{}).value||'').trim();
+  var p=(document.getElementById('onb-pass')||{}).value||'';
+  if(s.split(/\\s+/).length<12)return showError('Enter all 12 seed words');
+  if(p.length<8)return showError('Password must be 8+ characters');
+  clearError();ipc('import_wallet',{seed_phrase:s,password:p})
+}
+function unlock(){
+  var p=(document.getElementById('lock-pass')||{}).value||'';
+  if(!p)return showError('Enter your password');
+  clearError();ipc('unlock_wallet',{password:p})
+}
+function showError(m){
+  var e=document.getElementById('onb-error')||document.getElementById('lock-error');
+  if(e){e.textContent=m;e.classList.add('visible')}
+}
+function clearError(){
+  var es=document.querySelectorAll('.error-msg');
+  for(var i=0;i<es.length;i++)es[i].classList.remove('visible')
+}
+function updateBadge(){
+  var wb=document.getElementById('wallet-badge');
+  if(state.address){
+    wb.classList.add('visible');
+    document.getElementById('wallet-addr').textContent=state.address.slice(0,6)+'...'+state.address.slice(-4)
+  }else{wb.classList.remove('visible')}
+}
+
+document.getElementById('composer').addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&this.value.trim())ipc('composer_submit',{text:this.value.trim()})
+});
+
+document.getElementById('wallet-badge').addEventListener('click',function(){
+  document.getElementById('sidebar').classList.toggle('visible')
+});
+
+document.addEventListener('click',function(e){
+  var c=e.target.closest('.dapp-card');if(c&&c.dataset.url)ipc('navigate',{url:c.dataset.url})
+});
+
+showView('loading');
+ipc('page_loaded');
+</script></body></html>

@@ -1,0 +1,20 @@
+[package]
+description = "Matterhorn Composer — Unified input bar for Web3 browsing"
+edition.workspace = true
+name = "matterhorn_composer"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/matterhorn_composer.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+matterhorn_common.workspace = true
+regex-lite = "0.1"
+util.workspace = true

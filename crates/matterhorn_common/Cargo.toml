@@ -1,0 +1,18 @@
+[package]
+description = "Shared types, errors, and configuration for Matterhorn Browser"
+edition.workspace = true
+name = "matterhorn_common"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/matterhorn_common.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+paths.workspace = true

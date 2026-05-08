@@ -1,0 +1,20 @@
+[package]
+description = "Matterhorn Onboarding — First-launch wallet setup flow"
+edition.workspace = true
+name = "matterhorn_onboarding"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/matterhorn_onboarding.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+matterhorn_common.workspace = true
+matterhorn_wallet.workspace = true
+util.workspace = true

@@ -1,0 +1,22 @@
+[package]
+description = "Matterhorn Browser — Browse Web3. Natively. (GPUI-based)"
+edition.workspace = true
+name = "matterhorn_browser"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+default-run = "matterhorn_browser"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "matterhorn_browser"
+path = "src/matterhorn_browser.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+matterhorn_common.workspace = true
+matterhorn_viewport.workspace = true

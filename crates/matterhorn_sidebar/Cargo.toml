@@ -1,0 +1,19 @@
+[package]
+description = "Matterhorn Sidebar — AI context panel for Web3 browsing"
+edition.workspace = true
+name = "matterhorn_sidebar"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/matterhorn_sidebar.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+matterhorn_common.workspace = true
+util.workspace = true

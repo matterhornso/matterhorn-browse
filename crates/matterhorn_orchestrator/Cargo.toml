@@ -1,0 +1,24 @@
+[package]
+description = "Matterhorn Orchestrator — AI intent parsing, routing, and execution"
+edition.workspace = true
+name = "matterhorn_orchestrator"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/matterhorn_orchestrator.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+matterhorn_common.workspace = true
+regex-lite = "0.1"
+reqwest = { workspace = true, features = ["json"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+util.workspace = true

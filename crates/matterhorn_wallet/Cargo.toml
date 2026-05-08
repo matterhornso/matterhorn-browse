@@ -1,0 +1,30 @@
+[package]
+description = "Matterhorn Wallet — Native key management and transaction signing"
+edition.workspace = true
+name = "matterhorn_wallet"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/matterhorn_wallet.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+matterhorn_common.workspace = true
+bip39 = "2"
+bs58 = "0.5"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"
+k256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.8"
+reqwest = { workspace = true, features = ["json"] }
+security-framework = "2"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+util.workspace = true

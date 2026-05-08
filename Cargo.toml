@@ -128,6 +128,14 @@ members = [
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
+    "crates/matterhorn_browser",
+    "crates/matterhorn_common",
+    "crates/matterhorn_composer",
+    "crates/matterhorn_onboarding",
+    "crates/matterhorn_orchestrator",
+    "crates/matterhorn_sidebar",
+    "crates/matterhorn_viewport",
+    "crates/matterhorn_wallet",
     "crates/media",
     "crates/menu",
     "crates/migrator",
@@ -250,7 +258,7 @@ members = [
     "tooling/perf",
     "tooling/xtask",
 ]
-default-members = ["crates/zed"]
+default-members = ["crates/matterhorn_browser"]
 
 [workspace.package]
 publish = false
@@ -383,6 +391,14 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
+matterhorn_browser = { path = "crates/matterhorn_browser" }
+matterhorn_common = { path = "crates/matterhorn_common" }
+matterhorn_composer = { path = "crates/matterhorn_composer" }
+matterhorn_onboarding = { path = "crates/matterhorn_onboarding" }
+matterhorn_orchestrator = { path = "crates/matterhorn_orchestrator" }
+matterhorn_sidebar = { path = "crates/matterhorn_sidebar" }
+matterhorn_viewport = { path = "crates/matterhorn_viewport" }
+matterhorn_wallet = { path = "crates/matterhorn_wallet" }
 svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
