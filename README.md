@@ -9,12 +9,13 @@
 
 ## What is Matterhorn Browse?
 
-Matterhorn Browse is an open-source, GPU-accelerated **Web3 browser** for macOS, Linux, and Windows. It combines:
+Matterhorn Browse is an open-source, GPU-accelerated **Web3 browser** for macOS (with Linux and Windows planned). It combines:
 
-- **A built-in self-custody wallet** — EVM and Solana. Keys stay in your OS secure enclave
-- **A unified DePIN dashboard** — Manage your Helium hotspots, Render Network jobs, Filecoin storage, and more from one place
-- **Native on-chain browsing** — ENS, IPFS, and Arweave domains resolve natively in the URL bar
-- **A GPU-accelerated rendering engine** — Based on GPUI, the same engine that powers Zed. 5x lighter than Chromium, instant startup
+- **A built-in self-custody wallet** — EVM and Solana. Keys live in your OS Keychain
+- **A unified composer surface** — One input bar for URLs, natural-language questions, and transaction intents. The browser figures out what you meant
+- **Reverse ENS resolution** — Your wallet shows its `.eth` name when one is registered
+- **A GPU-accelerated rendering engine** — Based on GPUI, the same engine that powers Zed
+- **A unified DePIN dashboard** — *(planned, post-MVP)* Manage Helium hotspots, Render jobs, Filecoin storage, and more from one place
 
 Matterhorn Browse is for anyone curious about Web3 — from your first wallet to your tenth DePIN network.
 
@@ -55,13 +56,17 @@ These are the new crates that make Matterhorn Browse what it is:
 
 ```
 crates/
-  mb_wallet/          ← Self-custody wallet (EVM + Solana)
-  mb_depin/           ← Unified DePIN integration layer
-  mb_tab/             ← Chain-aware tabs (dapps, explorers, dashboards)
-  mb_onboarding/      ← Web3 onboarding (wallet creation, key backup, first token)
-  mb_ens/             ← ENS / decentralized DNS resolution
-  mb_content/         ← Content resolver (.ipfs, .arweave, .lens, .farcaster)
+  matterhorn_browser/       ← Binary entrypoint (GPUI window)
+  matterhorn_common/        ← Shared types, errors, persisted config
+  matterhorn_composer/      ← L1 — Unified input bar (URL/NL/TX detection)
+  matterhorn_orchestrator/  ← L2 — LLM intent parser + router
+  matterhorn_wallet/        ← L3 — Self-custody wallet (EVM via k256, Solana via ed25519, BIP39, Keychain)
+  matterhorn_onboarding/    ← Onboarding & unlock (create / import / unlock)
+  matterhorn_viewport/      ← L5 — wry WebView, tabs, navigation, transaction confirmation sheet
+  matterhorn_sidebar/       ← L5 — AI context panel (Cmd+B)
 ```
+
+> A `matterhorn_depin` crate is planned post-MVP — see the spec at [docs/matterhorn-browser-spec.md](./docs/matterhorn-browser-spec.md).
 
 ---
 
@@ -78,48 +83,51 @@ Matterhorn Browse is the first application that combines all three — browser, 
 
 ---
 
-## DePIN integrations (planned)
+## DePIN integrations (planned, post-MVP)
 
-| Category | Networks | What you can do |
+These targets are in the roadmap but **not yet implemented**. The plugin framework that drives them is the post-MVP `matterhorn_depin` crate (Layer 4 in the spec).
+
+| Category | Networks | What you'll be able to do |
 |----------|---------|-----------------|
 | **Compute** | Render, Akash, io.net, Golem | Browse GPU/CPU availability, submit jobs, monitor earnings |
-| **Storage** | Filecoin, Arweave, Storj | Upload files, browse storage deals, manage storage provider nodes |
+| **Storage** | Filecoin, Arweave, Storj | Upload files, browse storage deals, manage provider nodes |
 | **Wireless** | Helium, Helium Mobile, DIMO | Manage hotspots, track coverage, monitor device earnings |
 | **Mapping** | Hivemapper | Browse map coverage, manage dashcam contributions, track token rewards |
 | **Energy** | Daylight, Powerledger | Monitor energy production, browse P2P energy marketplace |
 
-All integrations are built through a plugin framework — any DePIN network can add a first-class dashboard.
+All integrations will be built through a plugin framework — any DePIN network will be able to add a first-class dashboard.
 
 ---
 
 ## Installation
 
-On macOS, Linux, and Windows you can download Matterhorn Browse from the [releases page](https://github.com/matterhornso/matterhorn-browse/releases).
+Pre-built binaries will be on the [releases page](https://github.com/matterhornso/matterhorn-browse/releases) once we cut the first release. Until then, build from source:
 
-Or build from source:
-
-### macOS
+### macOS (primary target — wallet uses Keychain via `security-framework`)
 ```bash
 ./script/bootstrap             # install build dependencies
-cargo build --release          # ~5 min on M3, ~15 min on Intel
-open target/release/Matterhorn\ Browse.app
+cargo build --release -p matterhorn_browser
+open target/release/matterhorn_browser
 ```
 
-### Linux
-```bash
-./script/bootstrap
-cargo build --release
-./target/release/matterhorn-browse
-```
+### Linux / Windows
+The wallet currently depends on macOS Keychain. Linux (Secret Service / KWallet) and Windows (DPAPI) backends are tracked as post-MVP work.
 
-### Windows
-```powershell
-.\script\bootstrap.ps1
-cargo build --release
-.\target\release\matterhorn-browse.exe
-```
+See [Zed's development docs](https://github.com/zed-industries/zed#developing-zed) for system-dependency setup that the bootstrap script doesn't cover.
 
-See [Zed's development docs](https://github.com/zed-industries/zed#developing-zed) for detailed per-platform instructions.
+### Configuration
+
+Matterhorn writes a config file to `~/.matterhorn/config.json` on first launch. Edit it to point at your own RPC endpoints or LLM provider — the schema:
+
+```json
+{
+  "llm_endpoint": "https://api.openai.com/v1",
+  "llm_model": "gpt-4o",
+  "llm_api_key": null,
+  "ethereum_rpc": "https://eth.llamarpc.com",
+  "solana_rpc": "https://api.mainnet-beta.solana.com"
+}
+```
 
 ---
 
