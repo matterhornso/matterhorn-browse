@@ -21,7 +21,12 @@ fn main() {
     let app = Application::with_platform(platform).with_assets(Assets);
 
     app.run(move |cx| {
-        let config = MatterhornConfig::default();
+        let config = MatterhornConfig::load_or_default();
+        // Persist the resolved config so first-launch users get a populated
+        // file they can edit. Failures are non-fatal.
+        if let Err(e) = config.save() {
+            eprintln!("matterhorn: failed to persist config: {e}");
+        }
 
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
