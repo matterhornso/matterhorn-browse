@@ -50,6 +50,7 @@ impl ComposerState {
         s.push(ch);
         self.input_text = SharedString::from(s);
         self.mode = detect_mode(&self.input_text);
+        self.suggestions_visible = true;
         cx.notify();
     }
 
@@ -94,6 +95,22 @@ impl ComposerState {
             last.map(|text| (text, mode))
         } else {
             None
+        }
+    }
+
+    /// Open the command palette: show the suggestions dropdown so the user can
+    /// pick from history. The composer's input bar is the palette surface in
+    /// the MVP — Cmd+K simply forces the dropdown open.
+    pub fn show_command_palette(&mut self, cx: &mut gpui::Context<Self>) {
+        self.suggestions_visible = true;
+        cx.notify();
+    }
+
+    /// Close the command palette / suggestions dropdown.
+    pub fn hide_command_palette(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.suggestions_visible {
+            self.suggestions_visible = false;
+            cx.notify();
         }
     }
 
@@ -175,8 +192,12 @@ impl Render for ComposerState {
                 |this, ev: &KeyDownEvent, _window, cx| match ev.keystroke.key.as_str() {
                     "backspace" => this.handle_backspace(cx),
                     "enter" | "return" => this.handle_submit(cx),
+                    "escape" => this.hide_command_palette(cx),
                     "space" => this.handle_char(' ', cx),
-                    key if key.chars().count() == 1 => {
+                    key if key.chars().count() == 1
+                        && !ev.keystroke.modifiers.control
+                        && !ev.keystroke.modifiers.platform =>
+                    {
                         this.handle_char(key.chars().next().unwrap(), cx);
                     }
                     _ => {}
