@@ -15,4 +15,5 @@ path = "src/matterhorn_common.rs"
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 paths.workspace = true
