@@ -35,16 +35,40 @@ struct Tab {
     url: SharedString,
     webview: Option<wry::WebView>,
     last_bounds: Bounds<Pixels>,
+    /// Per-tab navigation history. `history[history_index]` is the current URL.
+    history: Vec<SharedString>,
+    history_index: usize,
 }
 
 impl Tab {
     fn new(title: impl Into<SharedString>, url: impl Into<SharedString>) -> Self {
+        let url: SharedString = url.into();
         Self {
             title: title.into(),
-            url: url.into(),
+            url: url.clone(),
             webview: None,
             last_bounds: Bounds::default(),
+            history: vec![url],
+            history_index: 0,
         }
+    }
+
+    fn can_go_back(&self) -> bool {
+        self.history_index > 0
+    }
+
+    fn can_go_forward(&self) -> bool {
+        self.history_index + 1 < self.history.len()
+    }
+
+    /// Push a new URL onto the history, truncating any forward stack.
+    fn push_history(&mut self, url: SharedString) {
+        if self.history.get(self.history_index) == Some(&url) {
+            return;
+        }
+        self.history.truncate(self.history_index + 1);
+        self.history.push(url);
+        self.history_index = self.history.len() - 1;
     }
 }
 
@@ -53,6 +77,16 @@ enum TxStage {
     Signing,
     Signed { tx_hash: SharedString },
     Failed(SharedString),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum BrowserPhase {
+    /// First-launch: no wallet stored, run create/import flow.
+    Onboarding,
+    /// Wallet stored in Keychain — prompt for password before browsing.
+    Unlocking,
+    /// Wallet ready, render browser UI.
+    Browsing,
 }
 
 pub struct BrowserState {
@@ -73,8 +107,7 @@ pub struct BrowserState {
 
     sidebar_visible: bool,
     status_text: SharedString,
-    onboarding_done: bool,
-    first_render: bool,
+    phase: BrowserPhase,
 
     tx_stage: Option<TxStage>,
 }
@@ -84,15 +117,38 @@ impl BrowserState {
         let orchestrator = Rc::new(MatterhornOrchestrator::new(config.clone()));
         let composer = cx.new(|cx| ComposerState::new(cx));
         let wallet = cx.new(|_cx| MatterhornWallet::new());
-        let onboarding = cx.new(|cx| OnboardingState::new(cx, wallet.clone()));
+        let has_stored = MatterhornWallet::has_stored_wallet();
+        let onboarding = if has_stored {
+            cx.new(|cx| OnboardingState::unlocking(cx, wallet.clone()))
+        } else {
+            cx.new(|cx| OnboardingState::new(cx, wallet.clone()))
+        };
         let sidebar = cx.new(|_cx| SidebarState::new());
-        let onboarding_done = MatterhornWallet::has_stored_wallet();
         let tabs = vec![Tab::new("Matterhorn", "https://matterhorn.so")];
 
-        if onboarding_done {
-            let web_context = wry::WebContext::new(Some(std::env::temp_dir()));
-            cx.set_global(WebContextGlobal(web_context));
-        }
+        let phase = if has_stored {
+            BrowserPhase::Unlocking
+        } else {
+            BrowserPhase::Onboarding
+        };
+
+        // Observe the onboarding entity. When it flips `done = true` (via the
+        // create-wallet, import-wallet, or unlock flow), promote the phase to
+        // Browsing and kick off balance fetches + WebView context.
+        cx.observe(&onboarding, |this: &mut Self, onboarding, cx| {
+            if onboarding.read(cx).done && this.phase != BrowserPhase::Browsing {
+                this.transition_to_browsing(cx);
+            }
+        })
+        .detach();
+
+        // Observe the composer for new submissions.
+        cx.observe(&composer, |this: &mut Self, composer, cx| {
+            if composer.read(cx).submitted {
+                this.handle_submit(cx);
+            }
+        })
+        .detach();
 
         Self {
             orchestrator,
@@ -109,10 +165,17 @@ impl BrowserState {
             ens_name: SharedString::from("..."),
             sidebar_visible: false,
             status_text: SharedString::from(""),
-            onboarding_done,
-            first_render: true,
+            phase,
             tx_stage: None,
         }
+    }
+
+    fn transition_to_browsing(&mut self, cx: &mut Context<Self>) {
+        self.phase = BrowserPhase::Browsing;
+        let web_context = wry::WebContext::new(Some(std::env::temp_dir()));
+        cx.set_global(WebContextGlobal(web_context));
+        self.start_balance_fetches(cx);
+        cx.notify();
     }
 
     fn ensure_webview(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
@@ -140,17 +203,15 @@ impl BrowserState {
     }
 
     fn start_balance_fetches(&self, cx: &mut Context<Self>) {
+        // The wallet is already loaded by this point — onboarding (create/import)
+        // populated it from the entered password, or unlock decrypted the
+        // mnemonic from Keychain. Fetch balances and reverse-resolve ENS only.
         let wallet_entity = self.wallet.downgrade();
         let eth_rpc = self.eth_rpc.clone();
         let sol_rpc = self.sol_rpc.clone();
         let mut c = cx.to_async();
 
         cx.spawn(|this: gpui::WeakEntity<Self>, _cx: &mut gpui::AsyncApp| async move {
-            if let Some(wallet_e) = wallet_entity.upgrade() {
-                wallet_e.update(&mut c, |w, _cx| {
-                    let _ = w.load_from_keychain("");
-                });
-            }
             if let Some(wallet_e) = wallet_entity.upgrade() {
                 let rpc = eth_rpc.clone();
                 let balance = wallet_e.read_with(&c, |w, _| {
@@ -161,7 +222,8 @@ impl BrowserState {
                     this.update(&mut c, |s, cx| {
                         s.eth_balance = SharedString::from(bal);
                         cx.notify();
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
             if let Some(wallet_e) = wallet_entity.upgrade() {
@@ -174,13 +236,13 @@ impl BrowserState {
                     this.update(&mut c, |s, cx| {
                         s.sol_balance = SharedString::from(bal);
                         cx.notify();
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
             if let Some(wallet_e) = wallet_entity.upgrade() {
-                let addr = wallet_e.read_with(&c, |w, _| {
-                    w.selected_address().map(|a| a.to_string())
-                });
+                let addr =
+                    wallet_e.read_with(&c, |w, _| w.selected_address().map(|a| a.to_string()));
                 if let Some(address) = addr {
                     let name = wallet_e.read_with(&c, |w, _| {
                         let handle = tokio::runtime::Handle::current();
@@ -190,12 +252,14 @@ impl BrowserState {
                         this.update(&mut c, |s, cx| {
                             s.ens_name = SharedString::from(n);
                             cx.notify();
-                        }).ok();
+                        })
+                        .ok();
                     }
                 }
             }
             anyhow::Ok(())
-        }).detach();
+        })
+        .detach();
     }
 
     fn handle_submit(&mut self, cx: &mut Context<Self>) {
@@ -365,11 +429,56 @@ impl BrowserState {
         } else {
             url.to_string()
         };
+        let url_shared = SharedString::from(url.clone());
         if let Some(tab) = self.tabs.get_mut(self.active_tab) {
-            tab.url = SharedString::from(url.clone());
-            tab.title = SharedString::from(url.clone());
+            tab.url = url_shared.clone();
+            tab.title = url_shared.clone();
+            tab.push_history(url_shared);
             if let Some(ref wv) = tab.webview {
                 let _ = wv.load_url(&url);
+            }
+        }
+        cx.notify();
+    }
+
+    fn go_back(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get_mut(self.active_tab) else {
+            return;
+        };
+        if !tab.can_go_back() {
+            return;
+        }
+        tab.history_index -= 1;
+        let url = tab.history[tab.history_index].clone();
+        tab.url = url.clone();
+        tab.title = url.clone();
+        if let Some(ref wv) = tab.webview {
+            let _ = wv.load_url(&url);
+        }
+        cx.notify();
+    }
+
+    fn go_forward(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get_mut(self.active_tab) else {
+            return;
+        };
+        if !tab.can_go_forward() {
+            return;
+        }
+        tab.history_index += 1;
+        let url = tab.history[tab.history_index].clone();
+        tab.url = url.clone();
+        tab.title = url.clone();
+        if let Some(ref wv) = tab.webview {
+            let _ = wv.load_url(&url);
+        }
+        cx.notify();
+    }
+
+    fn reload_active(&mut self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.active_tab) {
+            if let Some(ref wv) = tab.webview {
+                let _ = wv.evaluate_script("location.reload()");
             }
         }
         cx.notify();
@@ -391,14 +500,42 @@ impl BrowserState {
             .build_as_child(window)
             .ok();
 
-        self.tabs.push(Tab {
-            title: SharedString::from("New Tab"),
-            url: SharedString::from(url),
-            webview,
-            last_bounds: Bounds::default(),
-        });
+        let mut tab = Tab::new("New Tab", url);
+        tab.webview = webview;
+        self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
         cx.notify();
+    }
+
+    /// Resize the active tab's webview to match current window bounds.
+    /// Idempotent — skips the IPC to wry if bounds haven't changed since the
+    /// last sync. Safe to call from render().
+    fn sync_active_webview_bounds(&mut self, window: &mut Window) {
+        let bounds = window.bounds();
+        let active = self.active_tab;
+        let Some(tab) = self.tabs.get_mut(active) else {
+            return;
+        };
+        if tab.last_bounds == bounds {
+            return;
+        }
+        tab.last_bounds = bounds;
+        let sidebar_w: f32 = if self.sidebar_visible { 280.0 } else { 0.0 };
+        let y_offset = 72.0_f32;
+        let width = bounds.size.width.as_f32() - sidebar_w;
+        let height = bounds.size.height.as_f32() - y_offset;
+        if let Some(ref wv) = tab.webview {
+            let _ = wv.set_bounds(wry::Rect {
+                position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(
+                    0.0,
+                    y_offset.into(),
+                )),
+                size: wry::dpi::Size::Logical(wry::dpi::LogicalSize::new(
+                    width.max(100.0).into(),
+                    height.max(100.0).into(),
+                )),
+            });
+        }
     }
 
     fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -431,168 +568,185 @@ impl BrowserState {
         }
     }
 
-    fn render_confirmation_sheet(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_confirmation_sheet(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let sheet = match &self.tx_stage {
-            Some(TxStage::Confirm(tx)) => {
-                let (cancel, confirm): (
-                    Box<dyn Fn(&KeyDownEvent, &mut Window, &mut Context<Self>)>,
-                    Box<dyn Fn(&KeyDownEvent, &mut Window, &mut Context<Self>)>,
-                ) = (
-                    {
-                        let weak = cx.weak_entity();
-                        Box::new(move |_ev: &KeyDownEvent, _window, cx| {
-                            weak.update(cx, |this, cx| this.cancel_transaction(cx)).ok();
-                        })
-                    },
-                    {
-                        let weak = cx.weak_entity();
-                        Box::new(move |_ev: &KeyDownEvent, _window, cx| {
-                            weak.update(cx, |this, cx| this.confirm_transaction(cx)).ok();
-                        })
-                    },
-                );
-                div()
-                    .flex_col()
-                    .p_4()
-                    .gap_3()
-                    .bg(rgb(SURFACE))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(BORDER))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(rgb(TEXT))
-                            .child("Confirm Transaction"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(TEXT_MUTED))
-                            .child(format!("Send {} {} from {} to {}", tx.amount, tx.token, &tx.from[..10], &tx.to[..10])),
-                    )
-                    .child(
-                        div()
-                            .flex_row()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .id("tx-cancel")
-                                    .px_4()
-                                    .py_2()
-                                    .rounded_md()
-                                    .bg(rgb(SURFACE_ALT))
-                                    .text_sm()
-                                    .text_color(rgb(TEXT_MUTED))
-                                    .cursor_pointer()
-                                    .hover(|el| el.bg(rgb(BORDER)))
-                                    .child("Cancel"),
-                            )
-                            .child(
-                                div()
-                                    .id("tx-confirm")
-                                    .px_4()
-                                    .py_2()
-                                    .rounded_md()
-                                    .bg(rgb(ACCENT))
-                                    .text_sm()
-                                    .text_color(rgb(BG))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .cursor_pointer()
-                                    .hover(|el| el.opacity(0.8))
-                                    .child("Sign & Send"),
-                            ),
-                    )
-            }
-            Some(TxStage::Signing) => {
-                div()
-                    .flex_col()
-                    .p_4()
-                    .gap_3()
-                    .bg(rgb(SURFACE))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(BORDER))
-                    .child(
-                        div()
-                            .text_lg()
-                            .text_color(rgb(TEXT))
-                            .child("Signing transaction..."),
-                    )
-            }
-            Some(TxStage::Signed { tx_hash }) => {
-                let weak = cx.weak_entity();
-                div()
-                    .flex_col()
-                    .p_4()
-                    .gap_3()
-                    .bg(rgb(SURFACE))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(BORDER))
-                    .child(
-                        div()
-                            .text_lg()
-                            .text_color(rgb(GREEN))
-                            .child("\u{2713} Transaction Signed"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(TEXT_MUTED))
-                            .child(format!("TX Hash: {}", tx_hash)),
-                    )
-                    .child(
-                        div()
-                            .id("tx-dismiss")
-                            .px_4()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(SURFACE_ALT))
-                            .text_sm()
-                            .text_color(rgb(TEXT_MUTED))
-                            .cursor_pointer()
-                            .hover(|el| el.bg(rgb(BORDER)))
-                            .child("Dismiss"),
-                    )
-            }
-            Some(TxStage::Failed(msg)) => {
-                let weak = cx.weak_entity();
-                div()
-                    .flex_col()
-                    .p_4()
-                    .gap_3()
-                    .bg(rgb(SURFACE))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(BORDER))
-                    .child(
-                        div()
-                            .text_lg()
-                            .text_color(rgb(RED))
-                            .child("Transaction Failed"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(TEXT_MUTED))
-                            .child(msg.clone()),
-                    )
-                    .child(
-                        div()
-                            .id("tx-dismiss")
-                            .px_4()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(SURFACE_ALT))
-                            .text_sm()
-                            .text_color(rgb(TEXT_MUTED))
-                            .cursor_pointer()
-                            .hover(|el| el.bg(rgb(BORDER)))
-                            .child("Dismiss"),
-                    )
-            }
+            Some(TxStage::Confirm(tx)) => div()
+                .flex_col()
+                .p_4()
+                .gap_3()
+                .bg(rgb(SURFACE))
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(TEXT))
+                        .child("Confirm Transaction"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_MUTED))
+                        .child(format!(
+                            "Send {} {} from {} to {}",
+                            tx.amount,
+                            tx.token,
+                            short_addr(&tx.from),
+                            short_addr(&tx.to)
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_row()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id("tx-cancel")
+                                .px_4()
+                                .py_2()
+                                .rounded_md()
+                                .bg(rgb(SURFACE_ALT))
+                                .text_sm()
+                                .text_color(rgb(TEXT_MUTED))
+                                .cursor_pointer()
+                                .hover(|el| el.bg(rgb(BORDER)))
+                                .on_click(cx.listener(
+                                    |this: &mut Self,
+                                     _: &gpui::ClickEvent,
+                                     _: &mut Window,
+                                     cx: &mut Context<Self>| {
+                                        this.cancel_transaction(cx);
+                                    },
+                                ))
+                                .child("Cancel"),
+                        )
+                        .child(
+                            div()
+                                .id("tx-confirm")
+                                .px_4()
+                                .py_2()
+                                .rounded_md()
+                                .bg(rgb(ACCENT))
+                                .text_sm()
+                                .text_color(rgb(BG))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .cursor_pointer()
+                                .hover(|el| el.opacity(0.8))
+                                .on_click(cx.listener(
+                                    |this: &mut Self,
+                                     _: &gpui::ClickEvent,
+                                     _: &mut Window,
+                                     cx: &mut Context<Self>| {
+                                        this.confirm_transaction(cx);
+                                    },
+                                ))
+                                .child("Sign & Send"),
+                        ),
+                ),
+            Some(TxStage::Signing) => div()
+                .flex_col()
+                .p_4()
+                .gap_3()
+                .bg(rgb(SURFACE))
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .child(
+                    div()
+                        .text_lg()
+                        .text_color(rgb(TEXT))
+                        .child("Signing transaction..."),
+                ),
+            Some(TxStage::Signed { tx_hash }) => div()
+                .flex_col()
+                .p_4()
+                .gap_3()
+                .bg(rgb(SURFACE))
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .child(
+                    div()
+                        .text_lg()
+                        .text_color(rgb(GREEN))
+                        .child("\u{2713} Transaction Signed"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(TEXT_MUTED))
+                        .child(format!("TX Hash: {}", tx_hash)),
+                )
+                .child(
+                    div()
+                        .id("tx-dismiss")
+                        .px_4()
+                        .py_2()
+                        .rounded_md()
+                        .bg(rgb(SURFACE_ALT))
+                        .text_sm()
+                        .text_color(rgb(TEXT_MUTED))
+                        .cursor_pointer()
+                        .hover(|el| el.bg(rgb(BORDER)))
+                        .on_click(cx.listener(
+                            |this: &mut Self,
+                             _: &gpui::ClickEvent,
+                             _: &mut Window,
+                             cx: &mut Context<Self>| {
+                                this.tx_stage = None;
+                                cx.notify();
+                            },
+                        ))
+                        .child("Dismiss"),
+                ),
+            Some(TxStage::Failed(msg)) => div()
+                .flex_col()
+                .p_4()
+                .gap_3()
+                .bg(rgb(SURFACE))
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(BORDER))
+                .child(
+                    div()
+                        .text_lg()
+                        .text_color(rgb(RED))
+                        .child("Transaction Failed"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(TEXT_MUTED))
+                        .child(msg.clone()),
+                )
+                .child(
+                    div()
+                        .id("tx-dismiss")
+                        .px_4()
+                        .py_2()
+                        .rounded_md()
+                        .bg(rgb(SURFACE_ALT))
+                        .text_sm()
+                        .text_color(rgb(TEXT_MUTED))
+                        .cursor_pointer()
+                        .hover(|el| el.bg(rgb(BORDER)))
+                        .on_click(cx.listener(
+                            |this: &mut Self,
+                             _: &gpui::ClickEvent,
+                             _: &mut Window,
+                             cx: &mut Context<Self>| {
+                                this.tx_stage = None;
+                                cx.notify();
+                            },
+                        ))
+                        .child("Dismiss"),
+                ),
             None => return div(),
         };
 
@@ -606,28 +760,61 @@ impl BrowserState {
             .child(sheet)
     }
 
-    fn render_tab_bar(&self) -> impl IntoElement {
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let many_tabs = self.tabs.len() > 1;
         div()
-            .flex_row().items_center()
-            .bg(rgb(SURFACE_ALT)).border_b_1().border_color(rgb(BORDER))
+            .flex_row()
+            .items_center()
+            .bg(rgb(SURFACE_ALT))
+            .border_b_1()
+            .border_color(rgb(BORDER))
             .children(self.tabs.iter().enumerate().map(|(i, tab)| {
                 let is_active = i == self.active_tab;
+                let tab_id = format!("tab-{}", i);
+                let close_id = format!("tab-close-{}", i);
                 div()
-                    .flex_row().items_center().px_3().py_1p5().gap_2().text_sm()
+                    .id(tab_id)
+                    .flex_row()
+                    .items_center()
+                    .px_3()
+                    .py_1p5()
+                    .gap_2()
+                    .text_sm()
                     .when(is_active, |el| {
                         el.bg(rgb(SURFACE)).border_b_2().border_color(rgb(ACCENT))
                     })
                     .when(!is_active, |el| {
-                        el.text_color(rgb(TEXT_MUTED)).hover(|el| el.bg(rgb(SURFACE)))
+                        el.text_color(rgb(TEXT_MUTED))
+                            .cursor_pointer()
+                            .hover(|el| el.bg(rgb(SURFACE)))
                     })
+                    .on_click(cx.listener(
+                        move |this: &mut Self,
+                              _: &gpui::ClickEvent,
+                              window: &mut Window,
+                              cx: &mut Context<Self>| {
+                            this.set_active_tab(i, window, cx);
+                        },
+                    ))
                     .child(tab.title.clone())
-                    .when(self.tabs.len() > 1, |el| {
+                    .when(many_tabs, |el| {
                         el.child(
                             div()
-                                .id(format!("tab-close-{}", i))
-                                .px_1().text_xs().text_color(rgb(TEXT_DIM))
+                                .id(close_id)
+                                .px_1()
+                                .text_xs()
+                                .text_color(rgb(TEXT_DIM))
                                 .cursor_pointer()
                                 .hover(|el| el.text_color(rgb(TEXT)))
+                                .on_click(cx.listener(
+                                    move |this: &mut Self,
+                                          _: &gpui::ClickEvent,
+                                          window: &mut Window,
+                                          cx: &mut Context<Self>| {
+                                        this.close_tab(i, cx);
+                                        this.sync_active_webview_bounds(window);
+                                    },
+                                ))
                                 .child("x"),
                         )
                     })
@@ -636,122 +823,197 @@ impl BrowserState {
             .child(
                 div()
                     .id("new-tab-btn")
-                    .px_3().text_sm().text_color(rgb(TEXT_MUTED))
-                    .cursor_pointer().hover(|el| el.text_color(rgb(TEXT)))
+                    .px_3()
+                    .text_sm()
+                    .text_color(rgb(TEXT_MUTED))
+                    .cursor_pointer()
+                    .hover(|el| el.text_color(rgb(TEXT)))
+                    .on_click(cx.listener(
+                        |this: &mut Self,
+                         _: &gpui::ClickEvent,
+                         window: &mut Window,
+                         cx: &mut Context<Self>| {
+                            this.new_tab(window, cx);
+                            this.sync_active_webview_bounds(window);
+                        },
+                    ))
                     .child("+"),
             )
     }
 
-    fn render_toolbar(&self) -> impl IntoElement {
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.tabs.get(self.active_tab);
+        let can_back = active.map(|t| t.can_go_back()).unwrap_or(false);
+        let can_forward = active.map(|t| t.can_go_forward()).unwrap_or(false);
+
+        let back_color = if can_back {
+            rgb(TEXT)
+        } else {
+            rgb(TEXT_DIM)
+        };
+        let forward_color = if can_forward {
+            rgb(TEXT)
+        } else {
+            rgb(TEXT_DIM)
+        };
+
         div()
-            .flex_row().items_center().px_2().py_1().gap_2()
-            .bg(rgb(SURFACE)).border_b_1().border_color(rgb(BORDER))
+            .flex_row()
+            .items_center()
+            .px_2()
+            .py_1()
+            .gap_2()
+            .bg(rgb(SURFACE))
+            .border_b_1()
+            .border_color(rgb(BORDER))
             .child(
-                div().flex_row().items_center().gap_1()
-                    .child(div().px_2().text_sm().text_color(rgb(TEXT_MUTED)).child("\u{2190}"))
-                    .child(div().px_2().text_sm().text_color(rgb(TEXT_MUTED)).child("\u{2192}"))
-                    .child(div().px_2().text_sm().text_color(rgb(TEXT_MUTED)).child("\u{21BB}")),
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id("nav-back")
+                            .px_2()
+                            .text_sm()
+                            .text_color(back_color)
+                            .when(can_back, |el| {
+                                el.cursor_pointer().hover(|el| el.text_color(rgb(ACCENT)))
+                            })
+                            .on_click(cx.listener(
+                                |this: &mut Self,
+                                 _: &gpui::ClickEvent,
+                                 _: &mut Window,
+                                 cx: &mut Context<Self>| {
+                                    this.go_back(cx);
+                                },
+                            ))
+                            .child("\u{2190}"),
+                    )
+                    .child(
+                        div()
+                            .id("nav-forward")
+                            .px_2()
+                            .text_sm()
+                            .text_color(forward_color)
+                            .when(can_forward, |el| {
+                                el.cursor_pointer().hover(|el| el.text_color(rgb(ACCENT)))
+                            })
+                            .on_click(cx.listener(
+                                |this: &mut Self,
+                                 _: &gpui::ClickEvent,
+                                 _: &mut Window,
+                                 cx: &mut Context<Self>| {
+                                    this.go_forward(cx);
+                                },
+                            ))
+                            .child("\u{2192}"),
+                    )
+                    .child(
+                        div()
+                            .id("nav-reload")
+                            .px_2()
+                            .text_sm()
+                            .text_color(rgb(TEXT_MUTED))
+                            .cursor_pointer()
+                            .hover(|el| el.text_color(rgb(ACCENT)))
+                            .on_click(cx.listener(
+                                |this: &mut Self,
+                                 _: &gpui::ClickEvent,
+                                 _: &mut Window,
+                                 cx: &mut Context<Self>| {
+                                    this.reload_active(cx);
+                                },
+                            ))
+                            .child("\u{21BB}"),
+                    ),
             )
             .child(
-                div().flex_row().items_center().gap_2()
-                    .child(div().text_xs().text_color(rgb(TEXT_MUTED))
-                        .child(format!("ETH: {}", self.eth_balance)))
-                    .child(div().text_xs().text_color(rgb(TEXT_MUTED))
-                        .child(format!("SOL: {}", self.sol_balance)))
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(format!("ETH: {}", self.eth_balance)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(format!("SOL: {}", self.sol_balance)),
+                    )
                     .when(self.ens_name.as_ref() != "...", |el| {
-                        el.child(div().text_xs().text_color(rgb(GREEN)).child(self.ens_name.clone()))
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(GREEN))
+                                .child(self.ens_name.clone()),
+                        )
                     }),
             )
             .child(div().flex_1())
-            .child(div().text_xs().text_color(rgb(TEXT_DIM)).child(self.status_text.clone()))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(TEXT_DIM))
+                    .child(self.status_text.clone()),
+            )
+    }
+
+    fn set_active_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.tabs.len() || index == self.active_tab {
+            return;
+        }
+        self.active_tab = index;
+        self.sync_active_webview_bounds(window);
+        cx.notify();
+    }
+}
+
+/// Truncate an address to a 10-char prefix for display ("0xabc...").
+fn short_addr(addr: &str) -> String {
+    if addr.len() <= 10 {
+        addr.to_string()
+    } else {
+        format!("{}...", &addr[..addr.len().min(10)])
     }
 }
 
 impl Render for BrowserState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        eprintln!("RENDER: onboarding_done={} first_render={} has_wallet={}", 
-            self.onboarding_done, self.first_render,
-            matterhorn_wallet::MatterhornWallet::has_stored_wallet());
-
-        if !self.onboarding_done {
-            let done = self.onboarding.read(cx).done;
-            eprintln!("RENDER: onboarding.done={}", done);
-            if done {
-                self.onboarding_done = true;
-                let web_context = wry::WebContext::new(Some(std::env::temp_dir()));
-                cx.set_global(WebContextGlobal(web_context));
-                self.start_balance_fetches(cx);
-            }
+        // Onboarding / unlock screens render the OnboardingState entity full-screen.
+        if matches!(self.phase, BrowserPhase::Onboarding | BrowserPhase::Unlocking) {
+            return div()
+                .size_full()
+                .bg(rgb(BG))
+                .child(self.onboarding.clone())
+                .into_any_element();
         }
 
-        if self.first_render {
-            self.first_render = false;
-            if self.onboarding_done {
-                self.start_balance_fetches(cx);
-            }
-        }
-
-        let submitted = self.composer.read(cx).submitted;
-        if submitted {
-            self.handle_submit(cx);
-        }
-
-        if !self.onboarding_done {
-            let onboarding_done = self.onboarding.read(cx).done;
-            eprintln!("DEBUG: onboarding.done={}, step={:?}", onboarding_done, self.onboarding.read(cx).step);
-            if onboarding_done {
-                self.onboarding_done = true;
-                let web_context = wry::WebContext::new(Some(std::env::temp_dir()));
-                cx.set_global(WebContextGlobal(web_context));
-                self.start_balance_fetches(cx);
-            } else {
-                // Render onboarding UI
-                eprintln!("DEBUG: Rendering onboarding");
-                return div()
-                    .size_full()
-                    .bg(rgb(BG))
-                    .child(self.onboarding.clone())
-                    .into_any_element();
-            }
-        }
-
+        // Browsing phase: ensure the active tab has a WebView, then sync bounds.
+        // set_bounds is idempotent — calling it from render is safe and does not
+        // trigger a re-render via cx.notify().
         self.ensure_webview(window, cx);
-
-        // Resize active webview on bounds change
-        let bounds = window.bounds();
-        let active = self.active_tab;
-        if let Some(tab) = self.tabs.get_mut(active) {
-            if tab.last_bounds != bounds {
-                tab.last_bounds = bounds;
-                let y_offset = 72.0_f32;
-                let sidebar_w: f32 = if self.sidebar_visible { 280.0 } else { 0.0 };
-                let width = bounds.size.width.as_f32() - sidebar_w;
-                let height = bounds.size.height.as_f32() - y_offset;
-                if let Some(ref wv) = tab.webview {
-                    let _ = wv.set_bounds(wry::Rect {
-                        position: wry::dpi::Position::Logical(
-                            wry::dpi::LogicalPosition::new(0.0, y_offset.into()),
-                        ),
-                        size: wry::dpi::Size::Logical(wry::dpi::LogicalSize::new(
-                            width.max(100.0).into(),
-                            height.max(100.0).into(),
-                        )),
-                    });
-                }
-            }
-        }
+        self.sync_active_webview_bounds(window);
 
         let composer = self.composer.clone();
-        let sidebar_e = self.sidebar.clone();
         let sidebar_open = self.sidebar_visible;
         let has_tx_sheet = self.tx_stage.is_some();
 
         div()
             .relative()
-            .size_full().flex_col().bg(rgb(BG)).font_family("System-ui")
+            .size_full()
+            .flex_col()
+            .bg(rgb(BG))
+            .font_family("System-ui")
             .on_key_down(cx.listener(
-                |this: &mut Self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>| {
-                    // If confirmation sheet is open, route clicks to our handlers
+                |this: &mut Self,
+                 ev: &KeyDownEvent,
+                 window: &mut Window,
+                 cx: &mut Context<Self>| {
                     if this.tx_stage.is_some() {
                         match ev.keystroke.key.as_str() {
                             "escape" => this.cancel_transaction(cx),
@@ -769,39 +1031,55 @@ impl Render for BrowserState {
                     }
                     let meta = ev.keystroke.modifiers.platform;
                     match ev.keystroke.key.as_str() {
-                        "t" if meta => this.new_tab(window, cx),
-                        "w" if meta => this.close_active_tab(cx),
+                        "t" if meta => {
+                            this.new_tab(window, cx);
+                            this.sync_active_webview_bounds(window);
+                        }
+                        "w" if meta => {
+                            this.close_active_tab(cx);
+                            this.sync_active_webview_bounds(window);
+                        }
                         "l" if meta => this.composer.focus_handle(cx).focus(window, cx),
+                        "k" if meta => {
+                            this.composer.update(cx, |c, cx| c.show_command_palette(cx));
+                        }
                         "b" if meta => {
                             this.sidebar_visible = !this.sidebar_visible;
+                            this.sync_active_webview_bounds(window);
                             cx.notify();
                         }
-                        "[" if meta => this.prev_tab(cx),
-                        "]" if meta => this.next_tab(cx),
-                        "r" if meta => {
-                            if let Some(tab) = this.tabs.get(this.active_tab) {
-                                if let Some(ref wv) = tab.webview {
-                                    let _ = wv.evaluate_script("location.reload()");
-                                }
-                            }
-                            cx.notify();
+                        "[" if meta => {
+                            this.prev_tab(cx);
+                            this.sync_active_webview_bounds(window);
                         }
+                        "]" if meta => {
+                            this.next_tab(cx);
+                            this.sync_active_webview_bounds(window);
+                        }
+                        "r" if meta => this.reload_active(cx),
                         _ => {}
                     }
                 },
             ))
-            .child(self.render_tab_bar())
-            .child(self.render_toolbar())
+            .child(self.render_tab_bar(cx))
+            .child(self.render_toolbar(cx))
             .child(
-                div().flex_row().flex_1().relative()
-                    .child(
-                        div().id("viewport").flex_1()
-                            .bg(gpui::rgba(0xFFFFFFFF))
-                    )
-                    .when(sidebar_open, |el| el.child(
-                        div().w(px(280.0)).h_full().bg(rgb(SURFACE)).border_l_1().border_color(rgb(BORDER))
-                            .child(self.sidebar.clone())
-                    )),
+                div()
+                    .flex_row()
+                    .flex_1()
+                    .relative()
+                    .child(div().id("viewport").flex_1().bg(gpui::rgba(0xFFFFFFFF)))
+                    .when(sidebar_open, |el| {
+                        el.child(
+                            div()
+                                .w(px(280.0))
+                                .h_full()
+                                .bg(rgb(SURFACE))
+                                .border_l_1()
+                                .border_color(rgb(BORDER))
+                                .child(self.sidebar.clone()),
+                        )
+                    }),
             )
             .child(composer)
             .when(has_tx_sheet, |el| {
