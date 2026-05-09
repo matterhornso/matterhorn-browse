@@ -27,4 +27,5 @@ security-framework = "2"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+sha3 = "0.10"
 util.workspace = true

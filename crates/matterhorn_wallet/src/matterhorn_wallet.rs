@@ -9,6 +9,7 @@ use rand::RngCore;
 use security_framework::os::macos::keychain::SecKeychain;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sha3::Keccak256;
 
 const KEYCHAIN_SERVICE: &str = "com.matterhorn.browser.wallet";
 const RPC_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -293,11 +294,11 @@ impl MatterhornWallet {
 fn derive_ethereum_address(signing_key: &SigningKey) -> String {
     let verifying_key = signing_key.verifying_key();
     let public_key = verifying_key.to_encoded_point(false);
+    // Strip the 0x04 SEC1 uncompressed prefix; Ethereum hashes the 64-byte
+    // (X || Y) pubkey with Keccak-256 and takes the last 20 bytes (== bytes 12..32).
     let pubkey_bytes = &public_key.as_bytes()[1..];
-    let mut hasher = Sha256::new();
-    hasher.update(pubkey_bytes);
-    let hash = hasher.finalize();
-    format!("0x{}", hex::encode(&hash[hash.len() - 20..]))
+    let hash = Keccak256::digest(pubkey_bytes);
+    format!("0x{}", hex::encode(&hash[12..32]))
 }
 
 fn hash_password(password: &str) -> [u8; 32] {
