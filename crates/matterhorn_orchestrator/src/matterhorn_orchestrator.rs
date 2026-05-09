@@ -24,7 +24,7 @@ pub struct SubIntent {
     pub intent: Box<Intent>,
 }
 
-/// LLM response envelope.
+/// LLM classification payload (the JSON the model returns inside its message).
 #[derive(Debug, Deserialize)]
 struct ClassificationResponse {
     intent: String,
@@ -38,6 +38,22 @@ struct IntentEntities {
     to: Option<String>,
     amount: Option<String>,
     token: Option<String>,
+}
+
+/// OpenAI-compatible chat completions envelope.
+#[derive(Debug, Deserialize)]
+struct OpenAIChatResponse {
+    choices: Vec<OpenAIChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIChoice {
+    message: OpenAIMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIMessage {
+    content: String,
 }
 
 /// The orchestrator: takes raw input, classifies it, and returns an Intent.
@@ -102,7 +118,7 @@ impl MatterhornOrchestrator {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a Web3 intent parser. Classify user input into one of: navigate, search, transact, multi_step, unknown. Extract entities: url, query, to, amount, token. Return JSON with fields: intent, entities."
+                    "content": "You are a Web3 intent parser. Classify user input into one of: navigate, search, transact, multi_step, unknown. Extract entities: url, query, to, amount, token. Return ONLY valid JSON with shape {\"intent\": string, \"entities\": {url?, query?, to?, amount?, token?}}. No prose, no markdown fences."
                 },
                 {
                     "role": "user",
@@ -110,12 +126,24 @@ impl MatterhornOrchestrator {
                 }
             ],
             "temperature": 0.1,
-            "max_tokens": 200
+            "max_tokens": 200,
+            "response_format": {"type": "json_object"}
         });
+
+        // OpenAI endpoints expect /chat/completions; allow callers to pass
+        // either the base or the full path.
+        let url = if self.config.llm_endpoint.ends_with("/chat/completions") {
+            self.config.llm_endpoint.clone()
+        } else {
+            format!(
+                "{}/chat/completions",
+                self.config.llm_endpoint.trim_end_matches('/')
+            )
+        };
 
         let response = self
             .client
-            .post(&self.config.llm_endpoint)
+            .post(&url)
             .header("Content-Type", "application/json")
             .header(
                 "Authorization",
@@ -134,9 +162,37 @@ impl MatterhornOrchestrator {
             bail!("LLM request failed ({status}): {body}");
         }
 
-        let classification: ClassificationResponse = response.json().await?;
+        let envelope: OpenAIChatResponse = response.json().await?;
+        let content = envelope
+            .choices
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("LLM returned no choices"))?
+            .message
+            .content;
+
+        let json_str = strip_json_fences(&content);
+        let classification: ClassificationResponse = serde_json::from_str(json_str)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to parse LLM classification JSON: {e}; got: {content}")
+            })?;
         Ok(classification_into_intent(classification, input))
     }
+}
+
+/// Strip optional markdown code fences around JSON content. LLMs occasionally
+/// emit ```json ... ``` even when asked not to.
+fn strip_json_fences(content: &str) -> &str {
+    let trimmed = content.trim();
+    let without_open = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed)
+        .trim_start();
+    without_open
+        .strip_suffix("```")
+        .unwrap_or(without_open)
+        .trim()
 }
 
 fn classification_into_intent(response: ClassificationResponse, raw_input: &str) -> Intent {
