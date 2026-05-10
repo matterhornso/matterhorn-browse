@@ -23,7 +23,6 @@ const TEXT_DIM: u32 = 0x636366;
 const TEXT: u32 = 0xFFFFFF;
 const GREEN: u32 = 0x30D158;
 const RED: u32 = 0xFF453A;
-const ORANGE: u32 = 0xE8A838;
 
 #[allow(dead_code)]
 struct WebContextGlobal(wry::WebContext);
@@ -300,7 +299,6 @@ impl BrowserState {
                         }
                     }
                 }
-                let route = orchestrator.route(&intent);
                 self.sidebar.update(cx, |sb, cx| {
                     sb.add_action(SharedString::from(format!("TX: {}", text)), cx);
                 });
