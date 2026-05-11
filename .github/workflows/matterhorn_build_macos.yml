@@ -1,0 +1,92 @@
+name: Build Matterhorn Browser (macOS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/matterhorn_**"
+      - "crates/gpui/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/matterhorn_build_macos.yml"
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcrun -sdk macosx metal --version
+          rustup --version
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: matterhorn-macos
+          cache-on-failure: true
+
+      - name: Build matterhorn_browser
+        env:
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: "1"
+        run: cargo build --release -p matterhorn_browser
+
+      - name: Bundle as Matterhorn Browser.app
+        run: |
+          APP="Matterhorn Browser.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          cp target/release/matterhorn_browser "$APP/Contents/MacOS/Matterhorn Browser"
+          chmod +x "$APP/Contents/MacOS/Matterhorn Browser"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>Matterhorn Browser</string>
+            <key>CFBundleDisplayName</key>
+            <string>Matterhorn Browser</string>
+            <key>CFBundleIdentifier</key>
+            <string>so.matterhorn.browser</string>
+            <key>CFBundleVersion</key>
+            <string>0.1.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>0.1.0</string>
+            <key>CFBundleExecutable</key>
+            <string>Matterhorn Browser</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>NSPrincipalClass</key>
+            <string>NSApplication</string>
+          </dict>
+          </plist>
+          PLIST
+
+          # Ad-hoc sign so Gatekeeper lets the user open it after the
+          # right-click → Open confirmation. Real Apple Developer ID signing
+          # is post-MVP.
+          codesign --force --deep --sign - "$APP"
+
+          # Zip preserving the .app bundle structure.
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "matterhorn-browser-macos.zip"
+          ls -lh matterhorn-browse-macos.zip 2>/dev/null || ls -lh matterhorn-browser-macos.zip
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: matterhorn-browser-macos-${{ github.sha }}
+          path: matterhorn-browser-macos.zip
+          retention-days: 14
+          if-no-files-found: error
