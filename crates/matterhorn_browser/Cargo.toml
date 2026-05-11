@@ -16,6 +16,7 @@ path = "src/matterhorn_browser.rs"
 
 [dependencies]
 anyhow.workspace = true
+assets.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 matterhorn_common.workspace = true

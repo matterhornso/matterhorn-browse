@@ -1,26 +1,24 @@
 // Matterhorn Browser — GPUI-based Web3 Browser
 
-use gpui::{Application, AppContext, WindowBounds, WindowOptions, Bounds, Point, SharedString, size, px};
-use matterhorn_viewport::BrowserState;
+use assets::Assets;
+use gpui::{
+    Application, AppContext, Bounds, Point, WindowBounds, WindowOptions, px, size,
+};
 use matterhorn_common::MatterhornConfig;
-
-struct Assets;
-
-impl gpui::AssetSource for Assets {
-    fn load(&self, _path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
-        Ok(None)
-    }
-
-    fn list(&self, _path: &str) -> gpui::Result<Vec<SharedString>> {
-        Ok(Vec::new())
-    }
-}
+use matterhorn_viewport::BrowserState;
 
 fn main() {
     let platform = gpui_platform::current_platform(false);
     let app = Application::with_platform(platform).with_assets(Assets);
 
     app.run(move |cx| {
+        // Bake the embedded font set (IBM Plex Sans, Lilex, etc.) into the
+        // text system. Without this, every text element renders with width 0
+        // and the UI looks blank against the dark background.
+        if let Err(e) = Assets.load_fonts(cx) {
+            eprintln!("matterhorn: failed to load fonts: {e}");
+        }
+
         let config = MatterhornConfig::load_or_default();
         // Persist the resolved config so first-launch users get a populated
         // file they can edit. Failures are non-fatal.
@@ -36,10 +34,11 @@ fn main() {
             ..Default::default()
         };
 
-        let window = cx.open_window(options, |_window, cx| {
-            cx.new(|cx| BrowserState::new(cx, config))
-        })
-        .unwrap();
+        let _window = cx
+            .open_window(options, |_window, cx| {
+                cx.new(|cx| BrowserState::new(cx, config))
+            })
+            .unwrap();
 
         cx.activate(true);
     });
