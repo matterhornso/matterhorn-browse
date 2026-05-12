@@ -56,7 +56,7 @@ These are the new crates that make Matterhorn Browse what it is:
 
 ```
 crates/
-  matterhorn_browser/       ← Binary entrypoint (GPUI window)
+  matterhorn_app/           ← Binary entrypoint, built on GPUI as a library
   matterhorn_common/        ← Shared types, errors, persisted config
   matterhorn_composer/      ← L1 — Unified input bar (URL/NL/TX detection)
   matterhorn_orchestrator/  ← L2 — LLM intent parser + router
@@ -67,6 +67,8 @@ crates/
 ```
 
 > A `matterhorn_depin` crate is planned post-MVP — see the spec at [docs/matterhorn-browser-spec.md](./docs/matterhorn-browser-spec.md).
+>
+> The legacy `matterhorn_browser` binary crate is being phased out in favor of `matterhorn_app`; see [REVIEW.md](./REVIEW.md) for the architectural pivot.
 
 ---
 
@@ -105,10 +107,11 @@ Pre-built binaries will be on the [releases page](https://github.com/matterhorns
 
 ### macOS (primary target — wallet uses Keychain via `security-framework`)
 ```bash
-./script/bootstrap             # install build dependencies
-cargo build --release -p matterhorn_browser
-open target/release/matterhorn_browser
+cargo build --release -p matterhorn_app
+open target/release/matterhorn_app
 ```
+
+`matterhorn_app` is the workspace default, so plain `cargo build --release` also works. Requires full Xcode (not just Command Line Tools) for the Metal shader compiler used by the GPUI renderer.
 
 ### Linux / Windows
 The wallet currently depends on macOS Keychain. Linux (Secret Service / KWallet) and Windows (DPAPI) backends are tracked as post-MVP work.

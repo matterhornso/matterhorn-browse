@@ -2,7 +2,9 @@
 
 > A working snapshot of what this codebase is, what's actually built, what was just shipped, and what's known-broken. Read this first when starting a session.
 >
-> Last updated: 2026-05-11. **MVP target launch: 2026-05-12.**
+> Last updated: 2026-05-12.
+>
+> **Architecture pivoted from Zed-hard-fork to GPUI-as-library on 2026-05-12.** See [REVIEW.md](./REVIEW.md) for the full strategic review. The production binary is now **`matterhorn_app`** (in `crates/matterhorn_app/`), built via `gpui_platform::application().run(...)` — the same pattern as `crates/gpui/examples/hello_world.rs`. The legacy `matterhorn_browser` crate is deprecated but kept in-tree for diff and reference; do not build it.
 
 ---
 
@@ -47,7 +49,8 @@ All matterhorn-specific code lives under `crates/matterhorn_*`. Total: **~2,400 
 
 | Crate | Layer | Lines | Role |
 |---|---|---|---|
-| `matterhorn_browser`     | bin  | 47   | Binary entrypoint. Creates the GPUI window, hydrates config, mounts `BrowserState`. |
+| `matterhorn_app`         | bin  | ~30  | **Active binary entrypoint (Option B).** Uses `gpui_platform::application().run`, enters a tokio multi-thread runtime, mounts `BrowserState`. No Zed scaffolding. |
+| `matterhorn_browser`     | bin  | 47   | **Deprecated.** The original hard-fork-of-Zed entrypoint that produced the blank UI. Kept in-tree until matterhorn_app is verified end-to-end, then will be removed. |
 | `matterhorn_common`      | —    | 123  | `MatterhornError`, `MatterhornConfig`, config load/save at `~/.matterhorn/config.json`. |
 | `matterhorn_composer`    | L1   | 290  | Unified input bar. URL/NL/Transaction mode detection. Cmd+K palette. History suggestions. |
 | `matterhorn_orchestrator`| L2   | 302  | Intent parser (regex heuristics + LLM fallback). OpenAI-compatible chat completions client. |
@@ -123,28 +126,27 @@ sudo xcodebuild -license accept
 xcrun -sdk macosx metal --version  # must print a version
 
 cd matterhorn-browse
-./script/bootstrap                  # installs build deps
-cargo build --release -p matterhorn_browser
-open target/release/matterhorn_browser
+cargo build --release -p matterhorn_app
+open target/release/matterhorn_app
 ```
 
-Expected build time: ~30 min cold, ~5 min warm.
+`matterhorn_app` is also the workspace default member, so `cargo build --release` alone produces the right binary. Expected build time: ~5–10 min cold (much faster than the legacy `matterhorn_browser` which dragged in the full Zed workspace).
 
 ### Cloud build (no local Xcode)
 Push to `main` or trigger the workflow manually:
 
 ```bash
-gh workflow run matterhorn_build_macos.yml --ref main
+gh workflow run matterhorn_app_macos.yml --ref main
 gh run watch
 ```
 
-The latest run's artifact contains `Matterhorn Browser.app` (ad-hoc signed). Download via:
+The latest run's artifact contains `Matterhorn App.app` (ad-hoc signed). Download via:
 
 ```bash
 gh run download <RUN_ID> -R matterhornso/matterhorn-browse
-unzip matterhorn-browser-macos-*/matterhorn-browser-macos.zip
-xattr -dr com.apple.quarantine "Matterhorn Browser.app"
-open "Matterhorn Browser.app"
+unzip matterhorn-app-macos-*/matterhorn-app-macos.zip
+xattr -dr com.apple.quarantine "Matterhorn App.app"
+open "Matterhorn App.app"
 ```
 
 ### Configuration

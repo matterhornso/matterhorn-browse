@@ -17,6 +17,10 @@ pub enum OnboardingStep {
     Welcome,
     CreateOrImport,
     CreateWallet { password: SharedString },
+    /// After a wallet is created we show the 12-word recovery phrase so the
+    /// user can write it down. The wallet is only persisted to Keychain after
+    /// they acknowledge — losing the phrase here means losing the wallet.
+    ShowRecoveryPhrase { phrase: SharedString },
     ImportWallet { phrase: SharedString, password: SharedString },
     Unlock,
     Complete,
@@ -86,10 +90,14 @@ impl OnboardingState {
 
 impl Render for OnboardingState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match &self.step {
+        let step = self.step.clone();
+        match step {
             OnboardingStep::Welcome => self.render_welcome(cx).into_any_element(),
             OnboardingStep::CreateOrImport => self.render_create_or_import(cx).into_any_element(),
             OnboardingStep::CreateWallet { .. } => self.render_create_wallet(cx).into_any_element(),
+            OnboardingStep::ShowRecoveryPhrase { phrase } => {
+                self.render_recovery_phrase(phrase, cx).into_any_element()
+            }
             OnboardingStep::ImportWallet { .. } => self.render_import_wallet(cx).into_any_element(),
             OnboardingStep::Unlock => self.render_unlock(cx).into_any_element(),
             OnboardingStep::Complete => self.render_complete(cx).into_any_element(),
@@ -292,15 +300,7 @@ impl OnboardingState {
                         cx.notify();
                     }
                     "enter" | "return" => {
-                        let password = this.password_input.to_string();
-                        if password.is_empty() {
-                            return;
-                        }
-                        this.wallet.update(cx, |wallet, _cx| {
-                            let _ = wallet.create(&password);
-                            let _ = wallet.create_solana(&password);
-                        });
-                        this.go_to(OnboardingStep::Complete, cx);
+                        this.try_create(cx);
                     }
                     "space" => {
                         this.password_input = SharedString::from(format!("{} ", this.password_input));
@@ -385,15 +385,7 @@ impl OnboardingState {
                                  _: &ClickEvent,
                                  _: &mut Window,
                                  cx: &mut Context<Self>| {
-                                    let password = this.password_input.to_string();
-                                    if password.is_empty() {
-                                        return;
-                                    }
-                                    this.wallet.update(cx, |wallet, _cx| {
-                                        let _ = wallet.create(&password);
-                                        let _ = wallet.create_solana(&password);
-                                    });
-                                    this.go_to(OnboardingStep::Complete, cx);
+                                    this.try_create(cx);
                                 },
                             ))
                             .child("Create Wallet"),
@@ -619,6 +611,130 @@ impl OnboardingState {
                                 },
                             ))
                             .child("Import"),
+                    ),
+            )
+    }
+
+    fn try_create(&mut self, cx: &mut Context<Self>) {
+        let password = self.password_input.to_string();
+        if password.is_empty() {
+            self.error = SharedString::from("Password is required.");
+            cx.notify();
+            return;
+        }
+        let result = self.wallet.update(cx, |wallet, _cx| {
+            let phrase = wallet.create(&password)?;
+            wallet.create_solana(&password)?;
+            anyhow::Ok(phrase)
+        });
+        match result {
+            Ok(phrase) => {
+                self.error = SharedString::from("");
+                self.go_to(
+                    OnboardingStep::ShowRecoveryPhrase {
+                        phrase: SharedString::from(phrase),
+                    },
+                    cx,
+                );
+            }
+            Err(e) => {
+                self.error = SharedString::from(format!("Create failed: {e}"));
+                cx.notify();
+            }
+        }
+    }
+
+    fn render_recovery_phrase(
+        &self,
+        phrase: SharedString,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let words: Vec<&str> = phrase.split_whitespace().collect();
+        div()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .w_full()
+            .h_full()
+            .bg(rgb(BG))
+            .child(
+                div()
+                    .flex_col()
+                    .items_center()
+                    .gap_4()
+                    .w(px(560.0))
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(ACCENT))
+                            .child("Your Recovery Phrase"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(TEXT_MUTED))
+                            .child(
+                                "Write these 12 words down in order. They are the only way to \
+                                recover your wallet if you forget your password. Never share them \
+                                with anyone. Matterhorn cannot recover them for you.",
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_row()
+                            .flex_wrap()
+                            .w_full()
+                            .gap_2()
+                            .children(words.iter().enumerate().map(|(i, word)| {
+                                div()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_2()
+                                    .w(px(130.0))
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .bg(rgb(SURFACE))
+                                    .border_1()
+                                    .border_color(rgb(BORDER))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(TEXT_MUTED))
+                                            .child(format!("{:>2}.", i + 1)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(rgb(TEXT))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(word.to_string()),
+                                    )
+                                    .into_any_element()
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("recovery-confirm-btn")
+                            .mt_4()
+                            .px_6()
+                            .py_3()
+                            .rounded_md()
+                            .bg(rgb(ACCENT))
+                            .text_color(rgb(BG))
+                            .font_weight(FontWeight::MEDIUM)
+                            .cursor_pointer()
+                            .hover(|el| el.opacity(0.85))
+                            .on_click(cx.listener(
+                                |this: &mut Self,
+                                 _: &ClickEvent,
+                                 _: &mut Window,
+                                 cx: &mut Context<Self>| {
+                                    this.go_to(OnboardingStep::Complete, cx);
+                                },
+                            ))
+                            .child("I've saved my recovery phrase"),
                     ),
             )
     }

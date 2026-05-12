@@ -259,7 +259,7 @@ members = [
     "tooling/perf",
     "tooling/xtask",
 ]
-default-members = ["crates/matterhorn_browser"]
+default-members = ["crates/matterhorn_app"]
 
 [workspace.package]
 publish = false
