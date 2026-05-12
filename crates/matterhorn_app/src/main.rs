@@ -8,8 +8,8 @@
 use std::borrow::Cow;
 
 use gpui::{
-    App, AppContext, Bounds, Context, Render, WindowBounds, WindowOptions, div, prelude::*, px,
-    rgb, size,
+    App, AppContext, Bounds, Context, Render, WindowBounds, WindowOptions, div, font, prelude::*,
+    px, rgb, size,
 };
 use gpui_platform::application;
 use matterhorn_common::MatterhornConfig;
@@ -108,6 +108,34 @@ fn main() {
             families.len(),
             families.iter().take(20).collect::<Vec<_>>()
         );
+
+        // Probe font resolution + glyph existence for the families we care
+        // about. resolve_font panics if no fallback resolves, so wrap each
+        // probe in catch_unwind so the binary survives and we see the failure.
+        for family in [
+            "IBM Plex Sans",
+            "Lilex",
+            ".SystemUIFont",
+            ".AppleSystemUIFont",
+            "Helvetica",
+            "Arial",
+        ] {
+            let ts = cx.text_system().clone();
+            let f = font(family);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let id = ts.resolve_font(&f);
+                // typographic_bounds errors if the char has no glyph in the font.
+                let h_ok = ts.typographic_bounds(id, px(16.0), 'H').is_ok();
+                let a_ok = ts.typographic_bounds(id, px(16.0), 'A').is_ok();
+                (id, h_ok, a_ok)
+            }));
+            match result {
+                Ok((id, h_ok, a_ok)) => log::info!(
+                    "matterhorn: probe {family:?} -> font_id={id:?}, has_glyph_H={h_ok}, has_glyph_A={a_ok}"
+                ),
+                Err(_) => log::error!("matterhorn: probe {family:?} PANICKED in resolve_font"),
+            }
+        }
 
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
         let opts = WindowOptions {
