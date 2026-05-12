@@ -987,6 +987,8 @@ impl Render for BrowserState {
             return div()
                 .size_full()
                 .bg(rgb(BG))
+                .font_family("IBM Plex Sans")
+                .text_color(rgb(TEXT))
                 .child(self.onboarding.clone())
                 .into_any_element();
         }
@@ -1006,6 +1008,8 @@ impl Render for BrowserState {
             .size_full()
             .flex_col()
             .bg(rgb(BG))
+            .font_family("IBM Plex Sans")
+            .text_color(rgb(TEXT))
             .on_key_down(cx.listener(
                 |this: &mut Self,
                  ev: &KeyDownEvent,

@@ -19,3 +19,5 @@ gpui_platform.workspace = true
 matterhorn_common.workspace = true
 matterhorn_viewport.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+env_logger.workspace = true
+log.workspace = true
