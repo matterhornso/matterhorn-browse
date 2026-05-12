@@ -12,7 +12,7 @@
 // confirm_transaction) keep working without depending on the Zed-internal
 // gpui_tokio bridge.
 
-use gpui::{App, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{App, AppContext, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
 use gpui_platform::application;
 use matterhorn_common::MatterhornConfig;
 use matterhorn_viewport::BrowserState;
