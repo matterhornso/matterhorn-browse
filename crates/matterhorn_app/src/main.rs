@@ -122,19 +122,17 @@ fn main() {
         ] {
             let ts = cx.text_system().clone();
             let f = font(family);
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let id = ts.resolve_font(&f);
-                // typographic_bounds errors if the char has no glyph in the font.
-                let h_ok = ts.typographic_bounds(id, px(16.0), 'H').is_ok();
-                let a_ok = ts.typographic_bounds(id, px(16.0), 'A').is_ok();
-                (id, h_ok, a_ok)
-            }));
-            match result {
-                Ok((id, h_ok, a_ok)) => log::info!(
-                    "matterhorn: probe {family:?} -> font_id={id:?}, has_glyph_H={h_ok}, has_glyph_A={a_ok}"
-                ),
-                Err(_) => log::error!("matterhorn: probe {family:?} PANICKED in resolve_font"),
-            }
+            // resolve_font is infallible (falls back through the stack); we
+            // want to distinguish "this exact family resolves" from "we hit
+            // a fallback". Use bounding_box which goes through font_id_for_metrics
+            // — actually we'll just call resolve and report whether the
+            // resulting FontId points at the same family we asked for.
+            let id = ts.resolve_font(&f);
+            let resolved_font = ts.get_font_for_id(id);
+            log::info!(
+                "matterhorn: probe {family:?} -> font_id={id:?}, resolved_back_to={:?}",
+                resolved_font.as_ref().map(|f| f.family.as_ref())
+            );
         }
 
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
