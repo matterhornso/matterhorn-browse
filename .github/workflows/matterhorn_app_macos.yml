@@ -1,0 +1,88 @@
+name: Build matterhorn_app (macOS spike)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/matterhorn_app/**"
+      - "crates/gpui/**"
+      - "crates/gpui_platform/**"
+      - "crates/gpui_macos/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/matterhorn_app_macos.yml"
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcrun -sdk macosx metal --version
+          rustup --version
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: matterhorn-app-macos
+          cache-on-failure: true
+
+      - name: Build matterhorn_app
+        env:
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: "1"
+        run: cargo build --release -p matterhorn_app
+
+      - name: Bundle as Matterhorn App.app
+        run: |
+          APP="Matterhorn App.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          cp target/release/matterhorn_app "$APP/Contents/MacOS/Matterhorn App"
+          chmod +x "$APP/Contents/MacOS/Matterhorn App"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>Matterhorn App</string>
+            <key>CFBundleDisplayName</key>
+            <string>Matterhorn App</string>
+            <key>CFBundleIdentifier</key>
+            <string>so.matterhorn.app</string>
+            <key>CFBundleVersion</key>
+            <string>0.1.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>0.1.0</string>
+            <key>CFBundleExecutable</key>
+            <string>Matterhorn App</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>NSPrincipalClass</key>
+            <string>NSApplication</string>
+          </dict>
+          </plist>
+          PLIST
+
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "matterhorn-app-macos.zip"
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: matterhorn-app-macos-${{ github.sha }}
+          path: matterhorn-app-macos.zip
+          retention-days: 14
+          if-no-files-found: error

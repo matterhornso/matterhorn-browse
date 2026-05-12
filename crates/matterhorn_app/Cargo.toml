@@ -1,0 +1,18 @@
+[package]
+name = "matterhorn_app"
+description = "Matterhorn Browser — Web3-native browser built on GPUI"
+edition.workspace = true
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "matterhorn_app"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true

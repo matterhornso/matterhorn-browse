@@ -128,6 +128,7 @@ members = [
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
+    "crates/matterhorn_app",
     "crates/matterhorn_browser",
     "crates/matterhorn_common",
     "crates/matterhorn_composer",
@@ -391,6 +392,7 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
+matterhorn_app = { path = "crates/matterhorn_app" }
 matterhorn_browser = { path = "crates/matterhorn_browser" }
 matterhorn_common = { path = "crates/matterhorn_common" }
 matterhorn_composer = { path = "crates/matterhorn_composer" }
