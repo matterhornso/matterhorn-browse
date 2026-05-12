@@ -86,22 +86,14 @@ impl OnboardingState {
 
 impl Render for OnboardingState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Wrap each step in a font_family-bearing container so that
-        // text inherits an explicit family we know is loaded. Relying on
-        // the GPUI default of ".SystemUIFont" produced zero-width text on
-        // the production binary; setting the family explicitly avoids that.
-        let inner = match &self.step {
+        match &self.step {
             OnboardingStep::Welcome => self.render_welcome(cx).into_any_element(),
             OnboardingStep::CreateOrImport => self.render_create_or_import(cx).into_any_element(),
             OnboardingStep::CreateWallet { .. } => self.render_create_wallet(cx).into_any_element(),
             OnboardingStep::ImportWallet { .. } => self.render_import_wallet(cx).into_any_element(),
             OnboardingStep::Unlock => self.render_unlock(cx).into_any_element(),
             OnboardingStep::Complete => self.render_complete(cx).into_any_element(),
-        };
-        div()
-            .size_full()
-            .font_family("IBM Plex Sans")
-            .child(inner)
+        }
     }
 }
 

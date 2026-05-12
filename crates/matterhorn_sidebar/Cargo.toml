@@ -16,4 +16,3 @@ path = "src/matterhorn_sidebar.rs"
 anyhow.workspace = true
 gpui.workspace = true
 matterhorn_common.workspace = true
-util.workspace = true

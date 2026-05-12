@@ -16,3 +16,6 @@ path = "src/main.rs"
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
+matterhorn_common.workspace = true
+matterhorn_viewport.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }

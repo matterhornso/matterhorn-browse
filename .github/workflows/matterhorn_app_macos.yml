@@ -6,6 +6,13 @@ on:
     branches: [main]
     paths:
       - "crates/matterhorn_app/**"
+      - "crates/matterhorn_common/**"
+      - "crates/matterhorn_composer/**"
+      - "crates/matterhorn_onboarding/**"
+      - "crates/matterhorn_orchestrator/**"
+      - "crates/matterhorn_sidebar/**"
+      - "crates/matterhorn_viewport/**"
+      - "crates/matterhorn_wallet/**"
       - "crates/gpui/**"
       - "crates/gpui_platform/**"
       - "crates/gpui_macos/**"

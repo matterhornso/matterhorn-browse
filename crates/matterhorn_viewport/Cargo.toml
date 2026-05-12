@@ -15,7 +15,6 @@ path = "src/matterhorn_viewport.rs"
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-gpui_tokio.workspace = true
 hex.workspace = true
 matterhorn_common.workspace = true
 matterhorn_composer.workspace = true
@@ -27,5 +26,4 @@ raw-window-handle = "0.6"
 serde.workspace = true
 sha2.workspace = true
 tokio.workspace = true
-util.workspace = true
 wry = "0.50"

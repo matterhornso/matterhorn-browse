@@ -17,4 +17,3 @@ anyhow.workspace = true
 gpui.workspace = true
 matterhorn_common.workspace = true
 regex-lite = "0.1"
-util.workspace = true
